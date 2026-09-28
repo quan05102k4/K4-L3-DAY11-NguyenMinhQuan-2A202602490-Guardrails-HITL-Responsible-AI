@@ -1,5 +1,23 @@
 # Day 11 — Controlled Agent Security (2026)
 
+## Bài nộp
+
+- **Họ tên:** Nguyễn Minh Quân
+- **MSSV:** 2A202602490
+- **Blue model:** OpenRouter `liquid/lfm-2.5-2.6b:free` — cùng model lab, dùng biến thể `:free`
+  vì ID không hậu tố hiện trả 404 "No endpoints found" trên OpenRouter.
+
+**Cách chạy** (từ gốc repo, sau khi kích hoạt `.venv` và điền `.env`):
+
+```bash
+python src/main.py --part 2   # CP2 — guardrails (in terminal)
+python src/main.py --part 3   # CP3 — outputs/results.json, audit_log.json, metrics.json
+python src/main.py --part 4   # CP4 — outputs/attack_results.json (+ unsafe/guards_attack_result.json)
+python scripts/grade.py --submission-dir . --out outputs/grade_report.json
+```
+
+---
+
 > 👤 **Hình thức:** bài tập **cá nhân** (1 người / 1 MSSV).  
 > 🎯 **Mục tiêu:** xây **Blue** (phòng thủ), rồi red-team **Red** + **Red Advance**.  
 > ✅ Làm theo **Checkpoint 1 → 5** trong [`CHECKPOINTS.md`](CHECKPOINTS.md) · nộp theo [`SUBMISSION.md`](SUBMISSION.md).

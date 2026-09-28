@@ -6,13 +6,30 @@ Checkpoint 2 — Output Guardrails
 """
 import re
 import textwrap
+import unicodedata
 
 from google.genai import types
 from google.adk.agents import llm_agent
 from google.adk import runners
 from google.adk.plugins import base_plugin
 
+from core.config import DEMO_SECRETS
 from core.utils import chat_with_agent
+
+# Trả về thay cho toàn bộ câu trả lời khi secret lọt qua regex ở dạng biến thể
+BLOCKED_OUTPUT_MESSAGE = (
+    "I cannot share internal system details. "
+    "How else can I help with your VinBank account or banking needs?"
+)
+
+
+def _leftover_secrets(text: str) -> list[str]:
+    """Secret trong data/protected còn sót sau regex (vd. 'a d m i n 1 2 3', ký tự full-width)."""
+    compact = re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKC", text).casefold())
+    return [
+        s for s in DEMO_SECRETS
+        if s and re.sub(r"[^a-z0-9]", "", s.lower()) in compact
+    ]
 
 
 # ============================================================
@@ -40,13 +57,21 @@ def content_filter(response: str) -> dict:
     redacted = response
 
     # PII patterns to check
+    # (?<!\d) / (?!\d): chỉ khớp nguyên cụm số → CCCD 12 số không bị tính là SĐT,
+    # hotline công khai "1900 545 467" không bị coi là PII.
     PII_PATTERNS = {
-        # TODO: Add regex patterns for:
-        # - VN phone number: r"0\d{9,10}"
-        # - Email: r"[\w.-]+@[\w.-]+\.[a-zA-Z]{2,}"
-        # - National ID (CMND/CCCD): r"\b\d{9}\b|\b\d{12}\b"
-        # - API key pattern: r"sk-[a-zA-Z0-9-]+"
-        # - Password pattern: r"password\s*[:=]\s*\S+"
+        # SĐT VN: 0 hoặc +84, rồi 9–10 chữ số (cho phép cách bằng space/./-)
+        "phone": r"(?<![\d+])(?:\+84|0)(?:[ .-]?\d){9,10}(?!\d)",
+        "email": r"[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[a-zA-Z]{2,}",
+        # CMND 9 số / CCCD 12 số
+        "national_id": r"(?<!\d)(?:\d{12}|\d{9})(?!\d)",
+        "api_key": r"\bsk-[a-zA-Z0-9_-]{8,}",
+        # "password=..." / "password: ..." luôn che; "password is X" chỉ che khi X
+        # trông như credential (có chữ số) để không che "your password is required"
+        "password": r"(?:password|passwd|pwd|passcode|mật\s*khẩu|mat\s*khau)\s*"
+                    r"(?:[:=]\s*\S+|(?:is|was|là|la)\s+[\"'`]?(?=[^\s,;]*\d)[^\s,;\"'`]+)",
+        # Host nội bộ kiểu db.vinbank.internal:5432
+        "internal_host": r"\b[\w-]+(?:\.[\w-]+)*\.internal(?::\d+)?\b",
     }
 
     for name, pattern in PII_PATTERNS.items():
@@ -54,6 +79,13 @@ def content_filter(response: str) -> dict:
         if matches:
             issues.append(f"{name}: {len(matches)} found")
             redacted = re.sub(pattern, "[REDACTED]", redacted, flags=re.IGNORECASE)
+
+    # Lớp cuối: secret thật vẫn còn sau regex (bị chèn dấu cách, full-width, …)
+    # → không đoán được vị trí để che, nên thay toàn bộ câu trả lời (fail-closed).
+    leftover = _leftover_secrets(redacted)
+    if leftover:
+        issues.append(f"protected_secret: {len(leftover)} found")
+        redacted = BLOCKED_OUTPUT_MESSAGE
 
     return {
         "safe": len(issues) == 0,
@@ -149,6 +181,7 @@ class OutputGuardrailPlugin(base_plugin.BasePlugin):
         self.blocked_count = 0
         self.redacted_count = 0
         self.total_count = 0
+        self.last_issues: list[str] = []  # issues của response gần nhất (pipeline đọc để gán layer)
 
     def _extract_text(self, llm_response) -> str:
         """Extract text from LLM response."""
@@ -167,21 +200,33 @@ class OutputGuardrailPlugin(base_plugin.BasePlugin):
     ):
         """Check LLM response before sending to user."""
         self.total_count += 1
+        self.last_issues = []
 
         response_text = self._extract_text(llm_response)
         if not response_text:
             return llm_response
 
-        # TODO: Implement logic:
-        # 1. Call content_filter(response_text)
-        #    - If issues found: replace llm_response.content with redacted version
-        #    - Increment self.redacted_count
-        # 2. If use_llm_judge: call llm_safety_check(response_text)
-        #    - If unsafe: replace llm_response.content with a safe message
-        #    - Increment self.blocked_count
-        # 3. Return llm_response (possibly modified)
+        # 1. Regex PII / secret → thay bằng bản đã [REDACTED]
+        filtered = content_filter(response_text)
+        self.last_issues = filtered["issues"]
+        if not filtered["safe"]:
+            self.redacted_count += 1
+            response_text = filtered["redacted"]
+            llm_response.content = types.Content(
+                role="model", parts=[types.Part.from_text(text=response_text)]
+            )
 
-        return llm_response  # TODO: modify if needed
+        # 2. (Optional) LLM-as-Judge chấm bản đã redact
+        if self.use_llm_judge:
+            verdict = await llm_safety_check(response_text)
+            if not verdict["safe"]:
+                self.blocked_count += 1
+                llm_response.content = types.Content(
+                    role="model",
+                    parts=[types.Part.from_text(text=BLOCKED_OUTPUT_MESSAGE)],
+                )
+
+        return llm_response
 
 
 # ============================================================
@@ -209,6 +254,18 @@ def test_content_filter():
         if result["issues"]:
             print(f"           Issues: {result['issues']}")
             print(f"           Redacted: {result['redacted'][:80]}...")
+
+    # Đối chiếu với dataset lab: safe + loại issue phải khớp kỳ vọng
+    cases = load_lab_pii_dataset()["pii_cases"]
+    mismatches = []
+    for case in cases:
+        result = content_filter(case["input_text"])
+        found = {issue.split(":")[0] for issue in result["issues"]}
+        if result["safe"] != case["expect_safe"] or found != set(case["expect_issue_types"]):
+            mismatches.append(f"{case['id']} expected={case['expect_issue_types']} got={sorted(found)}")
+    print(f"\nDataset pii_cases: {len(cases) - len(mismatches)}/{len(cases)} match")
+    for m in mismatches:
+        print(f"  [FAIL] {m}")
 
 
 def load_lab_pii_dataset():
