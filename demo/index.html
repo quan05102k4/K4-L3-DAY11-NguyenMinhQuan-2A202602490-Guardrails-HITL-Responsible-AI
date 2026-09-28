@@ -1,0 +1,723 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VinBank Guardrails Demo</title>
+<style>
+  :root {
+    --bg: #f4f6f9; --surface: #ffffff; --surface-2: #eef1f5; --text: #18202c; --muted: #5a6475;
+    --border: #d9dee6; --accent: #0b63c4; --accent-soft: #e3eefb; --accent-text: #ffffff;
+    --pass: #17804a; --pass-bg: #e3f4ea; --block: #c1352b; --block-bg: #fbe8e6;
+    --redact: #9a5b00; --redact-bg: #fcf0d9; --skip: #7b8494; --skip-bg: #eceff3;
+    --error: #b54708; --error-bg: #fdeadb; --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08);
+    --radius: 10px; --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f141b; --surface: #171e27; --surface-2: #1f2833; --text: #e6ebf2; --muted: #9aa5b5;
+      --border: #2c3643; --accent: #4f9cf0; --accent-soft: #1b2b40; --accent-text: #08111c;
+      --pass: #4cc38a; --pass-bg: #15301f; --block: #f07167; --block-bg: #3a1c1a;
+      --redact: #f0b35a; --redact-bg: #3a2a12; --skip: #8b95a5; --skip-bg: #232c37;
+      --error: #f59e5b; --error-bg: #3a2414; --shadow: 0 1px 2px rgba(0,0,0,.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f141b; --surface: #171e27; --surface-2: #1f2833; --text: #e6ebf2; --muted: #9aa5b5;
+    --border: #2c3643; --accent: #4f9cf0; --accent-soft: #1b2b40; --accent-text: #08111c;
+    --pass: #4cc38a; --pass-bg: #15301f; --block: #f07167; --block-bg: #3a1c1a;
+    --redact: #f0b35a; --redact-bg: #3a2a12; --skip: #8b95a5; --skip-bg: #232c37;
+    --error: #f59e5b; --error-bg: #3a2414; --shadow: 0 1px 2px rgba(0,0,0,.4);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  code, .mono { font-family: var(--mono); font-size: .88em; }
+  code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+  h1, h2, h3 { line-height: 1.25; margin: 0; }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 0 16px; }
+
+  header { background: var(--surface); border-bottom: 1px solid var(--border); }
+  .head { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding: 16px 0 12px; }
+  .head h1 { font-size: 20px; }
+  .head p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 600; white-space: nowrap; }
+  nav.tabs { display: flex; gap: 4px; overflow-x: auto; }
+  nav.tabs button { border: 0; background: none; color: var(--muted); font: inherit; font-weight: 600;
+    padding: 10px 14px; border-bottom: 2px solid transparent; cursor: pointer; white-space: nowrap; }
+  nav.tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+  main.wrap { padding-top: 20px; padding-bottom: 40px; }
+  section[role="tabpanel"][hidden] { display: none; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 16px; }
+  .card + .card { margin-top: 16px; }
+  .card h2 { font-size: 16px; margin-bottom: 10px; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+
+  /* ---- Kiến trúc ---- */
+  .principle { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .principle div { border-radius: 8px; padding: 12px; background: var(--surface-2); }
+  .principle b { display: block; margin-bottom: 4px; }
+  .flow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; }
+  .node { flex: 1 1 120px; border: 1px solid var(--border); background: var(--surface); border-radius: 8px;
+    padding: 10px; cursor: pointer; text-align: left; font: inherit; color: inherit; position: relative; }
+  .node:hover { border-color: var(--accent); }
+  .node[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+  .node .n { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .node .t { font-weight: 700; font-size: 14px; }
+  .node .cp { position: absolute; top: 8px; right: 8px; font-size: 11px; color: var(--muted); }
+  .arrow { align-self: center; color: var(--muted); font-size: 18px; }
+  .detail { margin-top: 14px; display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 16px; }
+  .detail h3 { font-size: 17px; margin-bottom: 4px; }
+  .detail ul { margin: 8px 0 0; padding-left: 18px; }
+  .detail li { margin-bottom: 6px; }
+  .why { background: var(--surface-2); border-radius: 8px; padding: 12px; font-size: 14px; }
+  .why b { display: block; margin-bottom: 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .02em; }
+
+  /* ---- Chat ---- */
+  .chat-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+  .chat { display: flex; flex-direction: column; height: min(78vh, 760px); padding: 0; }
+  .messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+  .msg { max-width: 88%; }
+  .msg.user { align-self: flex-end; }
+  .bubble { padding: 10px 12px; border-radius: 12px; white-space: pre-wrap; word-break: break-word; }
+  .user .bubble { background: var(--accent); color: var(--accent-text); border-bottom-right-radius: 4px; }
+  .bot .bubble { background: var(--surface-2); border-bottom-left-radius: 4px; border-left: 3px solid var(--pass); }
+  .bot.blocked .bubble { border-left-color: var(--block); }
+  .bot.redacted .bubble { border-left-color: var(--redact); }
+  .bot.errored .bubble { border-left-color: var(--error); }
+  .meta { font-size: 12px; color: var(--muted); margin-top: 4px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .verdict { font-weight: 700; }
+  .verdict.block { color: var(--block); } .verdict.pass { color: var(--pass); }
+  .verdict.redact { color: var(--redact); } .verdict.error { color: var(--error); }
+  .trace { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .step { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+  .s-pass { background: var(--pass-bg); color: var(--pass); }
+  .s-block { background: var(--block-bg); color: var(--block); }
+  .s-redact { background: var(--redact-bg); color: var(--redact); }
+  .s-skip { background: var(--skip-bg); color: var(--skip); }
+  .s-error { background: var(--error-bg); color: var(--error); }
+  details.why-trace { margin-top: 6px; font-size: 13px; }
+  details.why-trace summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+  details.why-trace ol { margin: 6px 0 0; padding-left: 20px; }
+  details.why-trace li { margin-bottom: 3px; }
+  .sys { align-self: center; font-size: 13px; color: var(--muted); background: var(--surface-2);
+    padding: 6px 12px; border-radius: 999px; text-align: center; }
+  .dots { display: inline-flex; gap: 3px; vertical-align: middle; margin-left: 6px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .dot.ok { background: var(--pass); } .dot.no { background: var(--block); }
+  .composer { border-top: 1px solid var(--border); padding: 12px 16px; display: grid; gap: 10px;
+    grid-template-columns: minmax(0, 1fr); }
+  .samples { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .samples-row { display: flex; gap: 6px; align-items: center; overflow-x: auto; padding-bottom: 2px; }
+  .samples-row span { font-size: 12px; font-weight: 700; color: var(--muted); flex: 0 0 64px; }
+  .chip { flex: 0 0 auto; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 999px;
+    padding: 3px 10px; font: inherit; font-size: 12.5px; cursor: pointer; }
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+  .chip.safe { border-left: 3px solid var(--pass); }
+  .chip.attack { border-left: 3px solid var(--block); }
+  .chip.edge { border-left: 3px solid var(--redact); }
+  .input-row { display: flex; gap: 8px; }
+  textarea, input[type="text"] { width: 100%; font: inherit; color: var(--text); background: var(--surface);
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+  textarea { resize: vertical; min-height: 44px; max-height: 160px; }
+  textarea:focus, input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  button.primary, button.ghost { font: inherit; font-weight: 600; border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-text); border: 1px solid var(--accent); }
+  button.ghost { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+  button:disabled { opacity: .55; cursor: not-allowed; }
+  .options { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; font-size: 13px; }
+  .options label { display: inline-flex; gap: 6px; align-items: center; }
+  .options input[type="text"] { width: 140px; padding: 5px 8px; }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+  .tile { background: var(--surface-2); border-radius: 8px; padding: 10px 12px; }
+  .tile .v { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .tile .l { font-size: 12px; color: var(--muted); }
+  .tile.good .v { color: var(--pass); } .tile.bad .v { color: var(--block); }
+  .alert { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: var(--redact-bg);
+    color: var(--redact); font-size: 13px; font-weight: 600; }
+  .audit { max-height: 330px; overflow: auto; }
+  .audit td { font-size: 12.5px; }
+  .tag { display: inline-block; font-size: 11.5px; font-weight: 600; padding: 1px 7px; border-radius: 999px; white-space: nowrap; }
+
+  /* ---- Egress ---- */
+  .egress-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+  .field { display: grid; gap: 4px; margin-bottom: 10px; font-size: 13px; font-weight: 600; }
+  .presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .result-banner { font-size: 18px; font-weight: 700; padding: 10px 12px; border-radius: 8px; margin-bottom: 10px; }
+  .result-banner.ok { background: var(--pass-bg); color: var(--pass); }
+  .result-banner.no { background: var(--block-bg); color: var(--block); }
+  .checks { list-style: none; margin: 0; padding: 0; }
+  .checks li { display: grid; grid-template-columns: 22px 1fr; gap: 6px; padding: 7px 0; border-bottom: 1px solid var(--border); }
+  .checks .ic { font-weight: 700; }
+  .checks .ic.ok { color: var(--pass); } .checks .ic.no { color: var(--block); }
+
+  .results-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+  .empty { color: var(--muted); font-style: italic; }
+  .table-scroll { overflow-x: auto; }
+
+  @media (max-width: 900px) {
+    .chat-grid, .egress-grid, .results-grid, .detail, .principle { grid-template-columns: minmax(0, 1fr); }
+    .arrow { display: none; }
+    .chat { height: 72vh; }
+    .msg { max-width: 96%; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="head">
+      <div>
+        <h1>VinBank Guardrails — Blue pipeline</h1>
+        <p>Lab Day 11 · Nguyễn Minh Quân · 2A202602490 · chạy local, dùng code thật trong <code>src/</code></p>
+      </div>
+      <span class="pill" id="model-pill">Blue: đang tải…</span>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" aria-controls="tab-arch" id="t-arch">Kiến trúc</button>
+      <button role="tab" aria-selected="false" aria-controls="tab-chat" id="t-chat">Chat demo</button>
+      <button role="tab" aria-selected="false" aria-controls="tab-egress" id="t-egress">Egress</button>
+      <button role="tab" aria-selected="false" aria-controls="tab-results" id="t-results">Kết quả chấm</button>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <!-- ================= KIẾN TRÚC ================= -->
+  <section role="tabpanel" id="tab-arch" aria-labelledby="t-arch">
+    <div class="card">
+      <h2>Nguyên tắc cốt lõi: Instruction vs Data</h2>
+      <div class="principle">
+        <div><b>Instruction (tin cậy) → tuân thủ</b>System prompt do lab đặt + quy tắc guardrails trong code.</div>
+        <div><b>Data (chưa tin cậy) → chỉ xử lý như dữ liệu</b>Tin nhắn user, email, đoạn RAG, web. Lệnh nằm trong data bị chặn; còn việc <i>tóm tắt</i> email bình thường vẫn được phép.</div>
+      </div>
+      <p class="small muted" style="margin:10px 0 0">System prompt của Blue có chứa secret giả kèm lời dặn "DO NOT DISCLOSE", nhưng model 2.6B dễ bị thuyết phục. Vì vậy mọi lớp bảo vệ quan trọng đều nằm <b>ngoài</b> model và được quyết định bằng code.</p>
+    </div>
+
+    <div class="card">
+      <h2>Luồng phòng thủ nhiều lớp (defense-in-depth)</h2>
+      <p class="small muted" style="margin:0 0 12px">Bấm vào từng lớp để xem giải thích. Lớp đầu tiên chặn thì các lớp sau không chạy; Audit + Monitoring luôn ghi lại, kể cả request bị chặn.</p>
+      <div class="flow" id="flow"></div>
+      <div class="detail" id="detail"></div>
+    </div>
+
+    <div class="card">
+      <h2>Ba agent trong lab</h2>
+      <table>
+        <thead><tr><th>Agent</th><th>Phòng thủ</th><th>Vai trò</th></tr></thead>
+        <tbody>
+          <tr><td><b>Blue</b></td><td>Các plugin tự viết ở CP2–CP3 (trang này)</td><td>Chứng minh hàng rào hoạt động → <code>results.json</code></td></tr>
+          <tr><td><b>Red</b></td><td>Cố ý "mềm", prompt cho phép chia sẻ</td><td>Mục tiêu tấn công CP4 — phải leak được secret</td></tr>
+          <tr><td><b>Red Advance</b></td><td>Guardrails cứng có sẵn (input + output hook)</td><td>Mục tiêu bonus B2</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ================= CHAT ================= -->
+  <section role="tabpanel" id="tab-chat" aria-labelledby="t-chat" hidden>
+    <div class="chat-grid">
+      <div class="card chat">
+        <div class="messages" id="messages" aria-live="polite"></div>
+        <div class="composer">
+          <div class="samples" id="samples"></div>
+          <div class="input-row">
+            <textarea id="input" rows="2" placeholder="Nhập câu hỏi… (Enter để gửi, Shift+Enter xuống dòng)"></textarea>
+            <button class="primary" id="send">Gửi</button>
+          </div>
+          <div class="options">
+            <label>user_id <input type="text" id="user-id" value="demo-user" maxlength="40"></label>
+            <label title="Tắt để test guardrail mà không tốn quota OpenRouter :free"><input type="checkbox" id="call-llm" checked> Gọi LLM thật</label>
+            <button class="ghost" id="auto" title="Tự gửi vài câu mẫu (offline) để xem từng lớp hoạt động">▶ Demo tự động</button>
+            <button class="ghost" id="spam" title="Gửi 12 câu liên tiếp (không gọi LLM) để thấy rate limiter chặn">Spam ×12</button>
+            <button class="ghost" id="reset" title="Tạo pipeline mới: xoá rate limit, audit, metrics">Reset phiên</button>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="card">
+          <h2>Monitoring (phiên này)</h2>
+          <div class="tiles" id="live-tiles"></div>
+          <div id="live-alerts"></div>
+        </div>
+        <div class="card">
+          <h2>Audit log</h2>
+          <div class="audit"><table><thead><tr><th>Giờ</th><th>User</th><th>Input</th><th>Kết quả</th><th>ms</th></tr></thead><tbody id="audit-body"></tbody></table></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= EGRESS ================= -->
+  <section role="tabpanel" id="tab-egress" aria-labelledby="t-egress" hidden>
+    <div class="egress-grid">
+      <div class="card">
+        <h2>Thử chính sách egress</h2>
+        <p class="small muted" style="margin:0 0 12px"><code>is_egress_allowed(destination, payload)</code> chạy trước mọi lần gửi dữ liệu ra ngoài. Quyết định hoàn toàn bằng rule trong code, không hỏi LLM.</p>
+        <div class="presets" id="presets"></div>
+        <label class="field">Destination (URL)<input type="text" id="eg-dest" value="https://api.vinbank.example/v1/transfers"></label>
+        <label class="field">Payload<textarea id="eg-payload" rows="3">approved transfer amount 500000</textarea></label>
+        <button class="primary" id="eg-check">Kiểm tra</button>
+      </div>
+      <div class="card">
+        <h2>Kết quả</h2>
+        <div id="eg-result"><p class="empty">Chọn một mẫu hoặc bấm "Kiểm tra".</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= KẾT QUẢ ================= -->
+  <section role="tabpanel" id="tab-results" aria-labelledby="t-results" hidden>
+    <p class="small muted" style="margin:0 0 12px">Đọc từ các file do lệnh lab sinh ra trong <code>outputs/</code> (artifact nộp bài). Riêng CP2 được tính lại trực tiếp trên dataset PII.</p>
+    <div id="results"><p class="empty">Đang tải…</p></div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const $ = (sel) => document.querySelector(sel);
+const el = (tag, cls, text) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined && text !== null) e.textContent = text;
+  return e;
+};
+
+/* ---------------- Tabs ---------------- */
+document.querySelectorAll('nav.tabs button').forEach((btn) => {
+  btn.addEventListener('click', () => selectTab(btn.id));
+});
+function selectTab(id) {
+  document.querySelectorAll('nav.tabs button').forEach((b) => {
+    const on = b.id === id;
+    b.setAttribute('aria-selected', String(on));
+    document.getElementById(b.getAttribute('aria-controls')).hidden = !on;
+  });
+  try { localStorage.setItem('tab', id); } catch (_) {}
+  history.replaceState(null, '', '#' + id.slice(2));
+  if (id === 't-results') loadSummary();
+  if (id === 't-chat') $('#input').focus();
+}
+
+/* ---------------- Kiến trúc ---------------- */
+const LAYERS = [
+  { key: 'rate_limiter', n: '1', t: 'Rate Limiter', cp: 'CP3',
+    file: 'src/assignment/rate_limiter.py · RateLimitPlugin',
+    what: 'Chặn spam và tấn công tốn chi phí, trước khi tốn regex hay LLM.',
+    how: [
+      'Sliding window theo từng user_id: mỗi user một deque timestamp.',
+      'Bỏ các timestamp cũ hơn 60 giây; nếu còn ≥ 10 thì chặn với thông báo "Rate limit exceeded. Try again in Ns."',
+      'Request bị chặn KHÔNG được ghi timestamp, nên spam liên tục không làm thời gian bị khoá kéo dài mãi.',
+    ],
+    why: 'Đứng đầu vì là lớp rẻ nhất: loại request rác trước khi tốn tài nguyên cho các lớp sau. Thử bằng nút "Spam ×12" ở tab Chat demo.' },
+  { key: 'input_guardrail', n: '2', t: 'Input Guardrail', cp: 'CP2',
+    file: 'src/guardrails/input_guardrails.py',
+    what: 'Chặn jailbreak / prompt injection và câu hỏi lạc đề TRƯỚC khi gọi LLM.',
+    how: [
+      'canonicalize(): NFKC (chữ full-width → thường), bỏ ký tự vô hình (\\u200b…), bỏ dấu tiếng Việt, chữ thường.',
+      'detect_injection(): ~26 regex trong 7 nhóm (ghi đè chỉ dẫn, chiếm vai, moi system prompt, đòi secret nội bộ, mã hoá, tiếng Việt, SQL) và chặn khi người dùng gõ lại secret nội bộ.',
+      'topic_filter(): có chủ đề cấm → chặn; không có từ khoá banking nào → chặn. So khớp theo ranh giới từ ("kill" ≠ "skill").',
+      'Input dài hơn 4.000 ký tự → chặn (chi phí + giấu lệnh trong khối văn bản lớn).',
+    ],
+    why: 'Chặn LỆNH nằm trong data, không chặn việc dữ liệu đến từ email. "Tóm tắt email chuyển khoản bị delay" vẫn được cho qua; còn "Ignore​ all previous instructions" (có ký tự ẩn) thì bị chặn.' },
+  { key: 'llm', n: '3', t: 'LLM (Blue)', cp: 'CP3',
+    file: 'OpenRouter liquid/lfm-2.5-2.6b:free · agents/agent.py',
+    what: 'Chỉ nhận những câu đã qua lớp 1–2. System prompt có secret giả kèm lời dặn "DO NOT DISCLOSE".',
+    how: [
+      'Gọi qua create_blue_agent(); pipeline tự điều phối các plugin để biết chính xác lớp nào chặn.',
+      'Timeout 60 giây/request; khi OpenRouter trả 429 "rate-limited upstream" thì chờ 5/15/30 giây rồi thử lại.',
+      'Nếu vẫn lỗi → ghi layer "llm_error", không làm sập cả bộ test.',
+      'Dùng biến thể ":free" vì ID gốc hiện trả 404 "No endpoints found".',
+    ],
+    why: 'Model nhỏ nghe lời system prompt kém, nên không thể dựa vào prompt để giữ secret. Đó là lý do phải có lớp 2 và lớp 4 bên ngoài model.' },
+  { key: 'output_guardrail', n: '4', t: 'Output Guardrail', cp: 'CP2',
+    file: 'src/guardrails/output_guardrails.py',
+    what: 'Quét câu trả lời SAU khi LLM tạo ra: che PII, chặn secret.',
+    how: [
+      'content_filter(): regex SĐT VN (0/+84, 9–10 số, có ranh giới chữ số), email, CCCD/CMND, sk-…, password=… / "password is X" (X có chữ số), host *.internal.',
+      'Lớp cuối: so khớp secret thật sau khi bỏ mọi ký tự đặc biệt (bắt được "a d m i n 1 2 3" hay chữ full-width) → thay TOÀN BỘ câu trả lời (fail-closed).',
+      'PII (SĐT, email, CCCD) → chỉ bị che, câu trả lời vẫn tới user. Secret → tính là bị chặn.',
+    ],
+    why: 'Lưới an toàn cuối cùng: nếu một prompt khéo léo lọt qua lớp 2 và model lỡ lộ secret, secret vẫn không tới được người dùng. Hotline công khai "1900 545 467" không bị che nhầm.' },
+  { key: 'audit', n: '5', t: 'Audit Log', cp: 'CP3',
+    file: 'src/assignment/audit_log.py · AuditLogPlugin',
+    what: 'Ghi lại ai hỏi gì, bot trả gì, có bị chặn không, lớp nào chặn, mất bao lâu.',
+    how: [
+      'record_input(): lưu user_id, input, thời điểm bắt đầu (theo request_id).',
+      'record_output(): lưu output, blocked, layer, latency_ms.',
+      'export_json() → outputs/audit_log.json.',
+    ],
+    why: 'Chỉ ghi câu trả lời CUỐI (đã qua output guardrail) để file log không trở thành nơi rò secret. Ghi cả request bị chặn để điều tra được sau sự cố.' },
+  { key: 'monitoring', n: '6', t: 'Monitoring', cp: 'CP3',
+    file: 'src/assignment/monitoring.py · MonitoringAlert',
+    what: 'Đếm tổng request, số bị chặn, số bị rate-limit; phát cảnh báo khi vượt ngưỡng.',
+    how: [
+      'record() cập nhật bộ đếm sau mỗi request.',
+      'check_metrics(): block rate ≥ 50%, rate-limit hits ≥ 5, judge fail rate ≥ 30% → Alert.',
+      'Alert được tính lại mỗi lần gọi nên không bị trùng; export_json() → outputs/metrics.json.',
+    ],
+    why: 'Block rate tăng vọt có thể là dấu hiệu bị tấn công hàng loạt, hoặc guardrail đang chặn nhầm người dùng thật. Cả hai đều cần người vào xem.' },
+  { key: 'egress', n: '7', t: 'Egress check', cp: 'CP3',
+    file: 'src/assignment/pipeline.py · is_egress_allowed',
+    what: 'Không cho dữ liệu nhạy cảm thoát ra ngoài hệ thống VinBank.',
+    how: [
+      'Chỉ HTTPS, host khớp TUYỆT ĐỐI allowlist: api.vinbank.example, cases.vinbank.example.',
+      'Chặn URL có userinfo (https://api.vinbank.example@evil.com thực chất là evil.com) và port lạ.',
+      'Payload phải qua content_filter: có password, API key, DB host, SĐT, email → chặn.',
+    ],
+    why: 'Quyết định bằng rule trong code, không để LLM "đồng ý", vì LLM có thể bị prompt injection thuyết phục. Thử ở tab Egress.' },
+];
+let selectedLayer = 'rate_limiter';
+function renderFlow() {
+  const flow = $('#flow');
+  flow.replaceChildren();
+  LAYERS.forEach((L, i) => {
+    const b = el('button', 'node');
+    b.setAttribute('aria-pressed', String(L.key === selectedLayer));
+    b.append(el('div', 'n', 'Lớp ' + L.n), el('div', 't', L.t), el('span', 'cp', L.cp));
+    b.addEventListener('click', () => { selectedLayer = L.key; renderFlow(); });
+    flow.append(b);
+    if (i < LAYERS.length - 1) flow.append(el('span', 'arrow', '→'));
+  });
+  const L = LAYERS.find((x) => x.key === selectedLayer);
+  const left = el('div');
+  left.append(el('h3', null, `Lớp ${L.n} · ${L.t}`));
+  const f = el('div', 'small muted mono', L.file);
+  left.append(f, el('p', null, L.what));
+  const ul = el('ul');
+  L.how.forEach((h) => ul.append(el('li', null, h)));
+  left.append(ul);
+  const right = el('div', 'why');
+  right.append(el('b', null, 'Vì sao làm vậy'), el('span', null, L.why));
+  $('#detail').replaceChildren(left, right);
+}
+
+/* ---------------- Helpers: nhãn layer ---------------- */
+const LAYER_LABEL = {
+  rate_limiter: ['Rate limiter', 's-block'], input_guardrail: ['Input guardrail', 's-block'],
+  output_guardrail: ['Output guardrail', 's-redact'], llm_error: ['Lỗi LLM', 's-error'],
+  model_refuse: ['Model từ chối', 's-pass'], leaked: ['LEAKED', 's-block'],
+  input_injection: ['Chặn input · injection', 's-pass'], input_topic: ['Chặn input · topic', 's-pass'],
+  output_filter: ['Chặn output', 's-pass'], error: ['Lỗi API', 's-error'],
+};
+function layerTag(layer, fallback = 'Qua hết', fallbackCls = 's-pass') {
+  const [label, cls] = LAYER_LABEL[layer] || [fallback, fallbackCls];
+  return el('span', 'tag ' + cls, label);
+}
+async function api(path, body) {
+  const opts = body === undefined ? {} : {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  };
+  const res = await fetch(path, opts);
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+/* ---------------- Chat ---------------- */
+const STEP_NAME = { rate_limiter: '① Rate limit', input_guardrail: '② Input', llm: '③ LLM',
+  output_guardrail: '④ Output', audit: '⑤ Audit' };
+const STEP_ICON = { pass: '✓', block: '✕', redact: 'che', skip: '–', error: '!' };
+let busy = false;
+
+function addUser(text) {
+  const m = el('div', 'msg user');
+  m.append(el('div', 'bubble', text === '' ? '(chuỗi rỗng)' : (text.length > 400 ? text.slice(0, 400) + `… [${text.length.toLocaleString()} ký tự]` : text)));
+  $('#messages').append(m);
+  m.scrollIntoView({ block: 'end' });
+}
+function addSys(node) {
+  const s = el('div', 'sys');
+  if (typeof node === 'string') s.textContent = node; else s.append(...node);
+  $('#messages').append(s);
+  s.scrollIntoView({ block: 'end' });
+  return s;
+}
+function addBot(res) {
+  const outcome = res.layer === 'llm_error' ? 'error'
+    : res.blocked ? 'block'
+    : res.trace.some((s) => s.status === 'redact') ? 'redact' : 'pass';
+  const m = el('div', 'msg bot ' + ({ block: 'blocked', redact: 'redacted', error: 'errored', pass: '' })[outcome]);
+  m.append(el('div', 'bubble', res.reply || '(không có nội dung)'));
+  const meta = el('div', 'meta');
+  const verdictText = {
+    block: 'Bị chặn tại ' + (STEP_NAME[res.layer] || res.layer),
+    redact: 'Đã trả lời · PII bị che',
+    error: 'Lỗi gọi LLM',
+    pass: res.layer === 'model_refuse' ? 'Qua pipeline · model tự từ chối' : 'Qua toàn bộ pipeline',
+  }[outcome];
+  meta.append(el('span', 'verdict ' + outcome, verdictText));
+  if (res.latency_ms != null) meta.append(el('span', null, `${Math.round(res.latency_ms).toLocaleString()} ms`));
+  m.append(meta);
+  const trace = el('div', 'trace');
+  res.trace.forEach((s) => trace.append(el('span', 'step s-' + s.status, `${STEP_NAME[s.key]} ${STEP_ICON[s.status]}`)));
+  m.append(trace);
+  const d = el('details', 'why-trace');
+  d.append(el('summary', null, 'Vì sao? (chi tiết từng lớp)'));
+  const ol = el('ol');
+  res.trace.forEach((s) => {
+    const li = el('li');
+    li.append(el('b', null, STEP_NAME[s.key].slice(2) + ': '), el('span', null, s.detail));
+    ol.append(li);
+  });
+  d.append(ol);
+  if (outcome === 'block') d.open = true;
+  m.append(d);
+  $('#messages').append(m);
+  m.scrollIntoView({ block: 'end' });
+}
+
+async function send(text, forceOffline = false) {
+  if (busy) return;
+  busy = true; toggleBusy(true);
+  addUser(text);
+  const callLlm = !forceOffline && $('#call-llm').checked;
+  const waiting = addSys(callLlm ? 'Đang xử lý… (nếu phải gọi LLM :free và gặp 429, có thể mất tới ~1 phút)' : 'Đang xử lý (offline)…');
+  try {
+    const res = await api('/api/chat', { message: text, user_id: $('#user-id').value, call_llm: callLlm });
+    waiting.remove();
+    addBot(res);
+    renderState(res.state);
+  } catch (e) {
+    waiting.textContent = 'Lỗi: ' + e.message;
+  } finally {
+    busy = false; toggleBusy(false);
+  }
+}
+function toggleBusy(on) {
+  ['#send', '#spam', '#reset', '#auto'].forEach((s) => { $(s).disabled = on; });
+  document.querySelectorAll('.chip').forEach((c) => { c.disabled = on; });
+}
+$('#send').addEventListener('click', () => {
+  const t = $('#input').value;
+  $('#input').value = '';
+  send(t);
+});
+$('#input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#send').click(); }
+});
+$('#spam').addEventListener('click', async () => {
+  if (busy) return;
+  busy = true; toggleBusy(true);
+  const user = $('#user-id').value;
+  const dots = el('span', 'dots');
+  const label = el('span', null, `Spam 12 câu "What is my account balance?" từ user "${user}" (không gọi LLM):`);
+  const line = addSys([label, dots]);
+  let passed = 0, blocked = 0, last;
+  try {
+    for (let i = 0; i < 12; i++) {
+      last = await api('/api/chat', { message: 'What is my account balance?', user_id: user, call_llm: false });
+      const hit = last.layer === 'rate_limiter';
+      hit ? blocked++ : passed++;
+      dots.append(el('span', 'dot ' + (hit ? 'no' : 'ok')));
+    }
+    line.append(el('span', null, ` → ${passed} qua, ${blocked} bị rate limiter chặn`));
+    renderState(last.state);
+  } catch (e) {
+    line.append(el('span', null, ' Lỗi: ' + e.message));
+  } finally {
+    busy = false; toggleBusy(false);
+  }
+});
+$('#reset').addEventListener('click', async () => {
+  const st = await api('/api/reset', {});
+  $('#messages').replaceChildren();
+  addSys('Đã tạo phiên mới: rate limit, audit và metrics được đặt lại.');
+  renderState(st);
+});
+
+let SAMPLES = null;
+async function runAuto() {
+  if (busy || !SAMPLES) return;
+  addSys('▶ Demo tự động (offline, không tốn quota LLM): an toàn → tấn công → email chứa lệnh ẩn → input quá dài → spam');
+  const picks = [SAMPLES.safe[0], SAMPLES.attack[0], SAMPLES.attack[7], SAMPLES.edge[1]].filter(Boolean);
+  for (const p of picks) await send(p.text, true);
+  $('#spam').click();
+}
+$('#auto').addEventListener('click', runAuto);
+
+async function loadSamples() {
+  const s = await api('/api/samples');
+  SAMPLES = s;
+  const box = $('#samples');
+  const groups = [['safe', 'An toàn'], ['attack', 'Tấn công'], ['edge', 'Case biên']];
+  groups.forEach(([k, name]) => {
+    const row = el('div', 'samples-row');
+    row.append(el('span', null, name));
+    s[k].forEach((item) => {
+      const c = el('button', 'chip ' + k, item.label);
+      c.title = item.text.length > 300 ? item.label : item.text;
+      c.addEventListener('click', () => send(item.text));
+      row.append(c);
+    });
+    box.append(row);
+  });
+}
+
+function renderState(st) {
+  const m = st.metrics;
+  const tiles = [
+    ['Tổng request', m.total_requests],
+    ['Bị chặn', m.blocked_requests],
+    ['Block rate', (m.block_rate * 100).toFixed(0) + '%'],
+    ['Rate-limit hits', m.rate_limit_hits],
+  ];
+  $('#live-tiles').replaceChildren(...tiles.map(([l, v]) => {
+    const t = el('div', 'tile');
+    t.append(el('div', 'v', String(v)), el('div', 'l', l));
+    return t;
+  }));
+  $('#live-alerts').replaceChildren(...m.alerts.map((a) => el('div', 'alert', '⚠ ' + a.message)));
+  const body = $('#audit-body');
+  if (!st.audit.length) {
+    const tr = el('tr'); const td = el('td', 'empty', 'Chưa có request nào.'); td.colSpan = 5; tr.append(td);
+    body.replaceChildren(tr); return;
+  }
+  body.replaceChildren(...st.audit.map((e) => {
+    const tr = el('tr');
+    const res = el('td');
+    res.append(e.blocked ? layerTag(e.layer) : layerTag(e.layer === 'output_guardrail' ? 'output_guardrail' : e.layer, 'Qua'));
+    tr.append(el('td', 'mono', e.time), el('td', null, e.user_id), el('td', null, e.input || '(rỗng)'), res,
+      el('td', 'mono', e.latency_ms == null ? '' : Math.round(e.latency_ms)));
+    return tr;
+  }));
+}
+
+/* ---------------- Egress ---------------- */
+const PRESETS = [
+  ['Hợp lệ', 'https://api.vinbank.example/v1/transfers', 'approved transfer amount 500000'],
+  ['Payload có password', 'https://api.vinbank.example/v1/transfers', 'admin password is admin123'],
+  ['Domain lạ', 'https://evil.example/collect', 'customer account 123456'],
+  ['HTTP (không TLS)', 'http://api.vinbank.example/v1/transfers', 'approved transfer amount 500000'],
+  ['Domain giả mạo', 'https://api.vinbank.example.evil.com/v1', 'approved transfer amount 500000'],
+  ['Userinfo lừa', 'https://api.vinbank.example@evil.com/x', 'hello'],
+  ['Payload có SĐT', 'https://cases.vinbank.example/tickets', 'call the customer at 0901234567'],
+];
+PRESETS.forEach(([name, d, p]) => {
+  const c = el('button', 'chip', name);
+  c.addEventListener('click', () => { $('#eg-dest').value = d; $('#eg-payload').value = p; checkEgress(); });
+  $('#presets').append(c);
+});
+$('#eg-check').addEventListener('click', checkEgress);
+async function checkEgress() {
+  const out = $('#eg-result');
+  try {
+    const r = await api('/api/egress', { destination: $('#eg-dest').value, payload: $('#eg-payload').value });
+    const banner = el('div', 'result-banner ' + (r.allowed ? 'ok' : 'no'), r.allowed ? '✓ ĐƯỢC PHÉP gửi ra ngoài' : '✕ CHẶN — không cho gửi');
+    const ul = el('ul', 'checks');
+    r.checks.forEach((c) => {
+      const li = el('li');
+      const text = el('div');
+      text.append(el('b', null, c.label), el('div', 'small muted', c.detail));
+      li.append(el('span', 'ic ' + (c.ok ? 'ok' : 'no'), c.ok ? '✓' : '✕'), text);
+      ul.append(li);
+    });
+    out.replaceChildren(banner, ul);
+  } catch (e) {
+    out.replaceChildren(el('p', 'empty', 'Lỗi: ' + e.message));
+  }
+}
+
+/* ---------------- Kết quả ---------------- */
+function tile(value, label, good) {
+  const t = el('div', 'tile' + (good === true ? ' good' : good === false ? ' bad' : ''));
+  t.append(el('div', 'v', String(value)), el('div', 'l', label));
+  return t;
+}
+async function loadSummary() {
+  const box = $('#results');
+  let s;
+  try { s = await api('/api/summary'); } catch (e) { box.replaceChildren(el('p', 'empty', 'Lỗi: ' + e.message)); return; }
+  const cards = [];
+
+  const cp23 = el('div', 'card');
+  cp23.append(el('h2', null, 'CP2 + CP3 · Blue (phòng thủ)'));
+  const tiles = el('div', 'tiles');
+  tiles.append(tile(`${s.cp2.pii_ok}/${s.cp2.pii_total}`, 'Dataset PII khớp (CP2)', s.cp2.pii_ok === s.cp2.pii_total));
+  if (s.cp3) {
+    const x = s.cp3.summary, rl = s.cp3.rate_limit;
+    tiles.append(
+      tile(`${x.safe_blocked}/${x.safe_total}`, 'Câu an toàn bị chặn nhầm', x.safe_blocked === 0),
+      tile(`${x.attack_blocked}/${x.attack_total}`, 'Câu tấn công bị chặn', x.attack_blocked >= 5),
+      tile(`${rl.passed}/${rl.blocked}/${rl.sent}`, 'Rate limit: qua / chặn / gửi', rl.blocked >= 1),
+      tile(`${x.edge_blocked}/${x.edge_total}`, 'Case biên bị chặn'),
+      tile(`${x.egress_correct}/${x.egress_total}`, 'Egress đúng', x.egress_correct === x.egress_total),
+    );
+    cp23.append(tiles);
+    const p = el('p', 'small muted');
+    p.style.margin = '10px 0 0';
+    p.textContent = `Thứ tự plugin: ${s.cp3.plugin_order.join(' → ')} · Model: ${s.cp3.blue_model}`;
+    cp23.append(p);
+  } else {
+    cp23.append(tiles, el('p', 'empty', 'Chưa có outputs/results.json — chạy python src/main.py --part 3'));
+  }
+  if (s.metrics && s.metrics.alerts) s.metrics.alerts.forEach((a) => cp23.append(el('div', 'alert', '⚠ metrics.json: ' + a.message)));
+  cards.push(cp23);
+
+  const cp4 = el('div', 'card');
+  cp4.append(el('h2', null, 'CP4 · Red team'));
+  if (s.cp4) {
+    const t4 = el('div', 'tiles');
+    t4.append(
+      tile(`${s.cp4.red.leaked}/${s.cp4.red.total}`, 'Red: số prompt leak', s.cp4.red.leaked >= 1),
+      tile(`${s.cp4.advance.leaked}/${s.cp4.advance.total}`, 'Red Advance: số prompt leak'),
+    );
+    cp4.append(t4);
+    const p = el('p', 'small muted');
+    p.style.margin = '10px 0';
+    p.textContent = `Model Red: ${s.cp4.provider} / ${s.cp4.model}. "LEAKED" trên Red là mục tiêu của bài (secret giả); trên Red Advance thì là bonus B2.`;
+    cp4.append(p);
+    const table = el('table');
+    const thead = el('thead'); const hr = el('tr');
+    ['#', 'Kỹ thuật', 'Red', 'Red Advance'].forEach((h) => hr.append(el('th', null, h)));
+    thead.append(hr);
+    const tb = el('tbody');
+    s.cp4.rows.forEach((r) => {
+      const tr = el('tr');
+      const a = el('td'); a.append(layerTag(r.red, 'Không leak', 's-skip'));
+      const b = el('td'); b.append(layerTag(r.advance, 'Không leak', 's-skip'));
+      tr.append(el('td', 'mono', String(r.id)), el('td', null, r.category), a, b);
+      tb.append(tr);
+    });
+    table.append(thead, tb);
+    const scroll = el('div', 'table-scroll');
+    scroll.append(table);
+    cp4.append(scroll);
+  } else {
+    cp4.append(el('p', 'empty', 'Chưa có outputs/attack_results.json — chạy python src/main.py --part 4'));
+  }
+  cards.push(cp4);
+
+  const grid = el('div', 'results-grid');
+  grid.append(...cards);
+  box.replaceChildren(grid);
+}
+
+/* ---------------- Khởi động ---------------- */
+renderFlow();
+api('/api/info').then((i) => { $('#model-pill').textContent = 'Blue: ' + i.blue_model; }).catch(() => {});
+const [hashTab, hashFlag] = location.hash.slice(1).split('&');
+addSys('Chọn một câu mẫu hoặc tự gõ. Mỗi câu trả lời có dải ①→⑤ cho biết đi qua / bị chặn ở lớp nào.');
+loadSamples()
+  .then(() => { if (hashFlag === 'auto') runAuto(); })
+  .catch((e) => addSys('Không tải được câu mẫu: ' + e.message));
+api('/api/state').then(renderState).catch(() => {});
+// Ưu tiên tab trên URL (#chat, #egress, #results…), sau đó tab lần trước
+let saved = hashTab ? 't-' + hashTab : null;
+if (!saved || !document.getElementById(saved)) {
+  try { saved = localStorage.getItem('tab'); } catch (_) {}
+}
+if (saved && document.getElementById(saved)) selectTab(saved);
+</script>
+</body>
+</html>

@@ -16,6 +16,10 @@ python src/main.py --part 4   # CP4 — outputs/attack_results.json (+ unsafe/gu
 python scripts/grade.py --submission-dir . --out outputs/grade_report.json
 ```
 
+**Demo UI (tuỳ chọn, không chấm):** `python demo/server.py` → mở http://127.0.0.1:8000 — giải thích từng lớp,
+chat trực tiếp qua pipeline thật (có trace ①→⑤ cho biết lớp nào chặn và vì sao), thử egress, xem kết quả `outputs/`.
+Demo chỉ lưu audit/metrics trong bộ nhớ, không ghi đè `outputs/*.json`.
+
 ---
 
 > 👤 **Hình thức:** bài tập **cá nhân** (1 người / 1 MSSV).  
